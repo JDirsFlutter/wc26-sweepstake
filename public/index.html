@@ -695,7 +695,7 @@
   <nav class="tabs">
     <button class="tab active" data-view="enter">Enter</button>
     <button class="tab" data-view="my-teams">My teams</button>
-    <button class="tab" data-view="leaderboard">Leaderboard</button>
+    <button class="tab" data-view="leaderboard">Picks</button>
     <button class="tab" data-view="rules">Rules</button>
   </nav>
 
@@ -1145,15 +1145,24 @@
   /* ---- Team card ----------------------------------------------- */
   function teamCard(team, tier) {
     const stage = teamFurthestStage(team.name);
-    const stageClass = stage.cssClass;
-    const stageLabel = stage.label;
+    // Hide the stage badge until there's meaningful progression: pre-tournament
+    // and during group stage it just reads "Group stage" which is noise. Show
+    // it once a team has advanced to knockouts, been eliminated, or won.
+    const noisyLabel = !stage.label
+      || stage.label === "Not started"
+      || stage.label === "Unknown"
+      || stage.label.toLowerCase().startsWith("group stage");
+    const showStage = !noisyLabel;
+    const children = [
+      el("span", { class: "flag", "aria-hidden": "true" }, [flagFor(team.abbr)]),
+      el("span", { class: "team-name" }, [team.name]),
+    ];
+    if (showStage) {
+      children.push(el("span", { class: "team-stage " + stage.cssClass }, [stage.label]));
+    }
     return el("div", { class: "team-card " + tier }, [
       el("div", { class: "team-card-tier" }, [tier === "elite" ? "Elite" : "Underdog"]),
-      el("div", { class: "team-card-body" }, [
-        el("span", { class: "flag", "aria-hidden": "true" }, [flagFor(team.abbr)]),
-        el("span", { class: "team-name" }, [team.name]),
-        el("span", { class: "team-stage " + stageClass }, [stageLabel]),
-      ]),
+      el("div", { class: "team-card-body" }, children),
     ]);
   }
 
@@ -1348,10 +1357,13 @@
       return;
     }
     const kudos = kudosForSlot(slot);
-    root.appendChild(el("p", { class: "view-meta" }, [
-      "Slot ", el("strong", null, [String(slot.slot)]), " · ",
-      el("strong", null, [String(kudos)]), " kudos earned so far.",
-    ]));
+    const metaChildren = ["Slot ", el("strong", null, [String(slot.slot)])];
+    if (kudos > 0) {
+      metaChildren.push(" · ", el("strong", null, [String(kudos)]), " kudos so far.");
+    } else {
+      metaChildren.push(".");
+    }
+    root.appendChild(el("p", { class: "view-meta" }, metaChildren));
 
     const reveal = el("div", { class: "reveal" }, [
       el("div", { class: "reveal-head" }, [
@@ -1367,17 +1379,11 @@
   }
 
   function renderLeaderboard(root) {
-    root.appendChild(el("h2", { class: "view-title" }, ["Leaderboard"]));
-    root.appendChild(el("p", { class: "view-meta" }, [
-      "Kudos by entrant. ", String(SWEEP_KUDOS.semiFinal), " per SF team, ",
-      String(SWEEP_KUDOS.finalAppearance), " bonus for the final, ",
-      String(SWEEP_KUDOS.winner), " bonus for the champion.",
-    ]));
+    root.appendChild(el("h2", { class: "view-title" }, ["Everyone's picks"]));
 
     if (!STATE.entries.length) {
-      root.appendChild(el("div", { class: "empty" }, [
-        el("strong", null, ["No entries yet"]),
-        "Once people claim slots they'll show up here.",
+      root.appendChild(el("p", { class: "view-meta" }, [
+        "No one has picked yet. Be the first.",
       ]));
       return;
     }
@@ -1395,7 +1401,16 @@
       }
       return { name: e.name, slot: e.slot, kudos, teams };
     });
-    rows.sort((a, b) => b.kudos - a.kudos || a.slot - b.slot);
+    // Sort by kudos descending once the tournament starts producing them.
+    // Pre-tournament everyone is 0, so fall back to pick order (slot number).
+    const anyKudos = rows.some((r) => r.kudos > 0);
+    rows.sort((a, b) => anyKudos ? (b.kudos - a.kudos || a.slot - b.slot) : (a.slot - b.slot));
+
+    root.appendChild(el("p", { class: "view-meta" }, [
+      String(rows.length), " of ", String((SWEEP_PARTICIPANTS || []).length),
+      " picked.",
+      anyKudos ? " Ranked by kudos." : " Listed in pick order. Kudos start landing once teams reach the semi-finals.",
+    ]));
 
     const table = el("table", { class: "lb" });
     const thead = el("thead", null, [
