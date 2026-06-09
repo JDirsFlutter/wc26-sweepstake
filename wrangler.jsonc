@@ -3,7 +3,7 @@
   "name": "wc26-sweepstake",
   "compatibility_date": "2025-01-01",
   "assets": {
-    "directory": "./",
+    "directory": "./public",
     "not_found_handling": "single-page-application"
   }
 }
