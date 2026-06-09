@@ -11,14 +11,41 @@
    ranked by implied tournament strength derived from match
    odds in Firestore (populated by the predictions sibling app
    or via the admin "Sync fixtures" action below).
-   At 48 qualifiers and 20 entrants:
-     20 elite + 28 underdog = 48 total used
-     20 entrants × 1 elite = 20 elite slots
-     20 entrants × 1.4 underdogs = 28 underdog slots
-     So 12 entrants get 1 underdog, 8 entrants get 2.
+   At 48 qualifiers and 19 entrants:
+     19 elite + 29 underdog = 48 total used
+     19 entrants × 1 elite = 19 elite slots
+     29 underdogs across 19 entrants: 10 slots get 2, 9 get 1.
    ---------------------------------------------------------- */
-const SWEEP_ENTRANT_COUNT = 20;
-const SWEEP_ELITE_TIER_COUNT = 20;
+const SWEEP_ENTRANT_COUNT = 19;
+const SWEEP_ELITE_TIER_COUNT = 19;
+
+/* ----- Participants ---------------------------------------
+   Fixed list of named entrants. The Enter view presents this
+   as a picker grid: click your name, get assigned the next
+   free slot, teams reveal. Everyone can see who has and who
+   has not picked yet.
+   ---------------------------------------------------------- */
+const SWEEP_PARTICIPANTS = [
+  "Chris",
+  "Claire",
+  "Dave",
+  "Ella",
+  "Gayle",
+  "Gemma",
+  "Graeme",
+  "Hugh",
+  "James",
+  "Matt",
+  "Michael",
+  "Morgan",
+  "Petre",
+  "Rob",
+  "Sharon Goodall",
+  "Sharon Gueller",
+  "Tom",
+  "Tony",
+  "William",
+];
 
 /* ----- Kudos (cosmetic prize points) ----------------------
    Awarded to the slot owner for each team's progression.

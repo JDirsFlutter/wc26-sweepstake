@@ -381,6 +381,71 @@
     margin: var(--space-xs) 0 0; min-height: 16px;
   }
 
+  /* ===== Participant picker ===== */
+  .picker-meta {
+    display: flex; justify-content: space-between; align-items: baseline;
+    gap: var(--space-md); flex-wrap: wrap;
+    margin: 0 0 var(--space-sm);
+  }
+  .picker-meta .legend {
+    font-size: var(--fs-12); line-height: var(--lh-16);
+    color: var(--font-interactive-medium);
+    text-transform: uppercase; letter-spacing: 1px;
+    font-weight: var(--fw-bold);
+  }
+  .picker-meta .legend strong { color: var(--font-interactive-primary-default); }
+  .participant-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: var(--space-sm);
+    margin: var(--space-md) 0;
+  }
+  .participant-chip {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: var(--space-sm);
+    padding: var(--space-md);
+    background: var(--c-neutral-500);
+    border: var(--border-sm) solid var(--border-interactive-weak);
+    border-radius: var(--radius-md);
+    color: var(--font-interactive-strongest);
+    font-family: var(--font-body); font-weight: var(--fw-medium);
+    font-size: var(--fs-16); line-height: var(--lh-24);
+    cursor: pointer; text-align: left;
+    transition: background var(--dur-fast) var(--ease-standard),
+                border-color var(--dur-fast) var(--ease-standard);
+  }
+  .participant-chip .name { display: inline-flex; align-items: center; gap: var(--space-xs); }
+  .participant-chip .tag {
+    font-size: var(--fs-10); line-height: var(--lh-16);
+    font-weight: var(--fw-bold);
+    text-transform: uppercase; letter-spacing: 1px;
+    padding: 2px var(--space-xs);
+    border-radius: var(--radius-sm);
+    color: var(--c-black);
+    background: var(--c-teal-500);
+  }
+  .participant-chip.available .tag { background: var(--c-neutral-600); color: var(--font-interactive-medium); }
+  .participant-chip.available:hover {
+    background: var(--c-teal-950);
+    border-color: var(--c-teal-700);
+  }
+  .participant-chip.available:hover .tag { background: var(--c-teal-700); color: var(--c-white); }
+  .participant-chip.claimed {
+    background: var(--c-neutral-700);
+    color: var(--font-interactive-medium);
+    cursor: not-allowed;
+  }
+  .participant-chip.claimed .name { text-decoration: line-through; text-decoration-color: var(--font-interactive-weak); text-decoration-thickness: 1px; }
+  .participant-chip.claimed .tag { background: var(--c-neutral-500); color: var(--font-interactive-strong); }
+  .participant-chip.you {
+    background: var(--c-teal-950);
+    border-color: var(--c-teal-500);
+    color: var(--font-interactive-strongest);
+    cursor: default;
+  }
+  .participant-chip.you .name { text-decoration: none; }
+  .participant-chip.you .tag { background: var(--c-teal-500); color: var(--c-black); }
+
   /* ===== Slot reveal / team card ===== */
   .reveal {
     background: var(--c-neutral-500);
@@ -814,12 +879,11 @@
       slotsRemaining.innerHTML = "<strong>Sweepstake closed</strong>";
       return;
     }
-    const total = STATE.slots.length || SWEEP_ENTRANT_COUNT;
-    const claimed = STATE.slots.filter((s) => s.claimedBy).length;
+    const total = (SWEEP_PARTICIPANTS || []).length;
+    const claimed = STATE.entries.length;
     const remaining = total - claimed;
-    slotsRemaining.innerHTML = remaining > 0
-      ? ("<strong>" + remaining + "</strong> slot" + (remaining === 1 ? "" : "s") + " left")
-      : "<strong>All slots claimed</strong>";
+    slotsRemaining.innerHTML = "<strong>" + claimed + "</strong> of " + total + " picked"
+      + (remaining > 0 ? "" : " &nbsp;·&nbsp; <strong>full</strong>");
   }
 
   /* ---- Tiering + draw generation ------------------------------- */
@@ -997,13 +1061,13 @@
   /* ---- Claim a slot -------------------------------------------- */
   async function claimSlot(rawName) {
     setClaimError("");
-    const name = normalizeName(rawName);
-    if (!name || name.length < 2) { setClaimError("Enter at least 2 characters."); return; }
-    if (name.length > 30) { setClaimError("Max 30 characters."); return; }
-    if (!/^[A-Za-z][A-Za-z .'\-]*$/.test(name)) { setClaimError("Letters, spaces, hyphens and apostrophes only."); return; }
+    // Name must come from the fixed participant list. Picker UI passes
+    // exact values; this check defends against console/script entries.
+    const name = (SWEEP_PARTICIPANTS || []).find((p) => p === rawName);
+    if (!name) { setClaimError("Pick a name from the list."); return; }
     if (STATE.fbMode !== "firebase") { setClaimError("Offline mode: shared draw unavailable."); return; }
     if (!STATE.meta || STATE.meta.status !== "drawn") { setClaimError("Sweepstake not open yet."); return; }
-    if (STATE.entries.find((e) => e.name === name)) { setClaimError("\"" + name + "\" is taken. Try \"" + name + " D\"."); return; }
+    if (STATE.entries.find((e) => e.name === name)) { setClaimError("\"" + name + "\" has already picked."); return; }
 
     const { fs, Db, Auth } = FB;
     const myUid = Auth.currentUser && Auth.currentUser.uid;
@@ -1187,13 +1251,13 @@
   }
 
   function renderEnter(root) {
-    root.appendChild(el("h2", { class: "view-title" }, ["Enter"]));
+    root.appendChild(el("h2", { class: "view-title" }, ["Pick your name"]));
 
     if (!STATE.meta || STATE.meta.status === "open") {
       root.appendChild(el("p", { class: "view-meta" }, ["The draw isn't ready yet. Come back when the admin opens it."]));
       root.appendChild(el("div", { class: "empty" }, [
         el("strong", null, ["Sweepstake opens soon"]),
-        "Once the draw is generated, anyone with this link can grab a free slot.",
+        "Once the draw is generated, the list of names appears here. Click yours to reveal your teams.",
       ]));
       return;
     }
@@ -1206,52 +1270,46 @@
       return;
     }
 
-    // Already entered?
-    const myEntry = STATE.me && STATE.entries.find((e) => e.name === STATE.me);
-    if (myEntry) {
-      const slot = STATE.slots.find((s) => s.slot === myEntry.slot);
-      if (slot) {
-        root.appendChild(el("p", { class: "view-meta" }, [
-          "You're in. Slot ", el("strong", null, [String(slot.slot)]), ". Head to ",
-          el("a", { href: "#my-teams", onclick: (e) => { e.preventDefault(); STATE.view = "my-teams"; render(); } }, ["My teams"]),
-          " for the detail or hit Leaderboard for the standings.",
-        ]));
-        return;
-      }
-    }
+    const claimedByName = new Map(STATE.entries.map((e) => [e.name, e]));
+    const claimedCount = STATE.entries.length;
+    const total = (SWEEP_PARTICIPANTS || []).length;
 
-    const claimedCount = STATE.slots.filter((s) => s.claimedBy).length;
-    const total = STATE.slots.length || SWEEP_ENTRANT_COUNT;
-    const remaining = total - claimedCount;
-    if (remaining <= 0) {
-      root.appendChild(el("div", { class: "empty" }, [
-        el("strong", null, ["All slots claimed"]),
-        "The Leaderboard tab shows everyone who's in and how they're doing.",
-      ]));
-      return;
-    }
+    root.appendChild(el("p", { class: "view-meta" }, [
+      "Click your name. You'll be revealed one elite team and one or two underdogs. The grid shows who's already picked.",
+    ]));
 
-    const hero = el("div", { class: "enter-hero" }, [
-      el("h3", null, ["Enter the sweepstake"]),
-      el("p", null, [
-        "Drop your name in. You'll be assigned the next free slot and revealed your teams: one elite team plus one or two underdogs. ",
-        el("strong", null, [String(remaining)]), " of ", String(total), " slots free.",
-      ]),
-      el("p", null, ["Win condition: the entrant whose team wins the tournament takes the headline kudos. Anyone whose team reaches the semi-final picks up kudos along the way."]),
+    const meta = el("div", { class: "picker-meta" }, [
+      el("span", { class: "legend" }, [el("strong", null, [String(claimedCount)]), " of ", String(total), " picked"]),
+      el("span", { class: "legend" }, [el("strong", null, [String(total - claimedCount)]), " left"]),
     ]);
-    const input = el("input", {
-      type: "text", id: "claim-name", class: "form-input",
-      placeholder: "Your name (e.g. James)", maxlength: "30", autocomplete: "given-name",
+    root.appendChild(meta);
+
+    const grid = el("div", { class: "participant-grid" });
+    (SWEEP_PARTICIPANTS || []).forEach((name) => {
+      const entry = claimedByName.get(name);
+      const isYou = STATE.me === name;
+      const claimed = !!entry;
+      let cls = "participant-chip ";
+      if (isYou) cls += "you";
+      else if (claimed) cls += "claimed";
+      else cls += "available";
+
+      const tagLabel = isYou ? "You" : claimed ? "Picked" : "Pick me";
+      const chip = el("button", {
+        class: cls,
+        disabled: claimed && !isYou,
+        onclick: claimed ? undefined : () => claimSlot(name),
+      }, [
+        el("span", { class: "name" }, [name]),
+        el("span", { class: "tag" }, [tagLabel]),
+      ]);
+      if (isYou) {
+        chip.addEventListener("click", () => { STATE.view = "my-teams"; render(); });
+      }
+      grid.appendChild(chip);
     });
-    const btn = el("button", {
-      class: "ps-btn large",
-      onclick: () => claimSlot(input.value),
-    }, ["Draw my teams"]);
-    input.addEventListener("keydown", (e) => { if (e.key === "Enter") btn.click(); });
-    const row = el("div", { class: "form-row" }, [input, btn]);
-    hero.appendChild(row);
-    hero.appendChild(el("p", { class: "form-error", id: "claim-error" }, []));
-    root.appendChild(hero);
+    root.appendChild(grid);
+    root.appendChild(el("p", { class: "form-error", id: "claim-error" }, []));
   }
 
   function renderMyTeams(root) {
@@ -1371,11 +1429,11 @@
 
     const cards = [
       { h: "The draw", body: [
-        el("p", null, ["20 slots. 48 World Cup teams. Each slot gets one elite team (top 20 by bookmakers' implied tournament strength) plus underdog teams from the remaining 28."]),
-        el("p", null, ["Because 28 underdogs don't divide evenly across 20 entrants, 8 slots get two underdogs and 12 slots get one. The luck on which is random."]),
+        el("p", null, ["19 named participants. 48 World Cup teams. Each person gets one elite team (top 19 by bookmakers' implied tournament strength) plus underdog teams from the remaining 29."]),
+        el("p", null, ["Because 29 underdogs don't divide evenly across 19 entrants, 10 slots get two underdogs and 9 slots get one. The luck on which is random."]),
       ]},
       { h: "Claiming a slot", body: [
-        el("p", null, ["First come first served. Enter your name, you get the next free slot, teams reveal."]),
+        el("p", null, ["Click your name from the grid on the Enter tab. You get the next free slot, teams reveal. Everyone else can see who's picked and who hasn't."]),
       ]},
       { h: "Kudos", body: [
         el("p", null, ["Kudos points award for each of your teams' progression. The Final is one match so a team that reaches it picks up the SF kudos plus the final bonus. The winner stacks all three."]),
