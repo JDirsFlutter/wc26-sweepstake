@@ -1073,21 +1073,33 @@
     const myUid = Auth.currentUser && Auth.currentUser.uid;
     if (!myUid) { setClaimError("Session not ready, try again in a moment."); return; }
 
+    // Pick the lowest-numbered free slot from the locally-subscribed state.
+    // The transaction below verifies atomically against server data; if another
+    // user grabs it first, the txn throws and the user clicks again.
+    const candidate = STATE.slots
+      .filter((s) => !s.claimedBy)
+      .sort((a, b) => a.slot - b.slot)[0];
+    if (!candidate) { setClaimError("Sweepstake full."); return; }
+
     try {
       const claimedSlot = await fs.runTransaction(Db, async (tx) => {
-        const slotsSnap = await tx.get(fs.query(fs.collection(Db, "sweep_slots"), fs.orderBy("slot")));
-        const free = slotsSnap.docs.find((d) => !d.data().claimedBy);
-        if (!free) throw new Error("Sweepstake full.");
-        const slot = free.data();
-        tx.update(free.ref, {
+        const entryRef = fs.doc(Db, "sweep_entries", name);
+        const slotRef  = fs.doc(Db, "sweep_slots",   String(candidate.slot));
+        const entrySnap = await tx.get(entryRef);
+        const slotSnap  = await tx.get(slotRef);
+        if (entrySnap.exists()) throw new Error("\"" + name + "\" has already picked. Refresh.");
+        if (!slotSnap.exists()) throw new Error("Slot data missing. Refresh and try again.");
+        const slotData = slotSnap.data();
+        if (slotData.claimedBy) throw new Error("Someone grabbed that slot first. Click again.");
+        tx.update(slotRef, {
           claimedBy: name,
           claimedAt: new Date().toISOString(),
           claimedByUid: myUid,
         });
-        tx.set(fs.doc(Db, "sweep_entries", name), {
-          name, slot: slot.slot, uid: myUid, joinedAt: new Date().toISOString(),
+        tx.set(entryRef, {
+          name, slot: candidate.slot, uid: myUid, joinedAt: new Date().toISOString(),
         });
-        return slot;
+        return { ...slotData, slot: candidate.slot, claimedBy: name };
       });
       STATE.me = name;
       localStorage.setItem("sweep_my_name", name);
