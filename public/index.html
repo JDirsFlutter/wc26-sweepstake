@@ -526,6 +526,12 @@
   .team-card .team-stage.semi  { background: var(--c-purple-500); color: var(--c-white); }
   .team-card .team-stage.final { background: var(--c-yellow-600); color: var(--c-black); }
   .team-card .team-stage.champion { background: var(--c-brand-red-500); color: var(--c-white); }
+  .team-card.eliminated .team-name {
+    text-decoration: line-through;
+    text-decoration-thickness: 2px;
+    opacity: 0.6;
+  }
+  .team-card.eliminated .flag { opacity: 0.4; filter: grayscale(0.7); }
 
   /* ===== Leaderboard table ===== */
   .lb {
@@ -572,6 +578,12 @@
     font-weight: var(--fw-medium);
   }
   .lb .team-chip.elite { border-color: var(--c-teal-700); }
+  .lb .team-chip.out {
+    opacity: 0.55;
+    text-decoration: line-through;
+    text-decoration-thickness: 1.5px;
+  }
+  .lb .team-chip.out .flag { text-decoration: none; filter: grayscale(0.7); }
   .lb .team-chip.semi  { background: var(--c-purple-900); color: var(--c-white); border-color: var(--c-purple-500); }
   .lb .team-chip.final { background: var(--c-yellow-900); color: var(--c-yellow-500); border-color: var(--c-yellow-600); }
   .lb .team-chip.champion { background: var(--c-red-900); color: var(--c-white); border-color: var(--c-brand-red-500); }
@@ -1160,7 +1172,8 @@
     if (showStage) {
       children.push(el("span", { class: "team-stage " + stage.cssClass }, [stage.label]));
     }
-    return el("div", { class: "team-card " + tier }, [
+    const cardCls = "team-card " + tier + (stage.cssClass === "out" ? " eliminated" : "");
+    return el("div", { class: cardCls }, [
       el("div", { class: "team-card-tier" }, [tier === "elite" ? "Elite" : "Underdog"]),
       el("div", { class: "team-card-body" }, children),
     ]);
@@ -1198,7 +1211,7 @@
     const playedSemi = matches.some((m) => m.stage === "semifinals");
     if (playedSemi) return { rank: 3, label: "Semi", cssClass: "semi" };
 
-    // Eliminated in earlier knockout (final result loss in QF/R16/R32)
+    // Completed earlier knockout (final result win/loss in QF/R16/R32)
     const knockoutStages = ["quarterfinals", "round-of-16", "round-of-32"];
     for (const stg of knockoutStages) {
       const k = matches.find((m) => m.stage === stg && m.status === "final");
@@ -1217,13 +1230,31 @@
         }
       }
     }
+    // Scheduled or live knockout match (no completed one yet for this team): they
+    // advanced from groups. Pick the earliest knockout stage they appear in so the
+    // label tracks the next game, not a far-future placeholder.
+    const stageOrder = ["round-of-32", "round-of-16", "quarterfinals"];
+    for (const stg of stageOrder) {
+      if (matches.some((m) => m.stage === stg)) {
+        const label = stg === "round-of-32" ? "Through to R32"
+          : stg === "round-of-16" ? "Through to R16"
+          : "Through to QF";
+        return { rank: 2, label, cssClass: "alive" };
+      }
+    }
     // Group stage
     const groupMatches = matches.filter((m) => m.stage === "group-stage");
     const groupFinals = groupMatches.filter((m) => m.status === "final").length;
     if (groupFinals === 0) return { rank: 2, label: "Group stage", cssClass: "alive" };
     if (groupFinals < groupMatches.length) return { rank: 2, label: "Group stage " + groupFinals + "/" + groupMatches.length, cssClass: "alive" };
-    // All group games done, no knockout match found => didn't advance
-    return { rank: 1, label: "Out (Group)", cssClass: "out" };
+    // All group games done. Only mark a team as out if the knockout bracket has
+    // actually been drawn (matches with knockout stages exist in the dataset). If
+    // not, hold them as "Group complete" until the bracket lands.
+    const anyKnockoutInDataset = STATE.matches.some((m) =>
+      m.stage && m.stage !== "group-stage"
+    );
+    if (anyKnockoutInDataset) return { rank: 1, label: "Out (Group)", cssClass: "out" };
+    return { rank: 2, label: "Group complete", cssClass: "alive" };
   }
 
   function stageShort(stage) {
