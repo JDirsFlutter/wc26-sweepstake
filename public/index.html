@@ -1190,10 +1190,22 @@
   }
 
   /* ---- Scoring engine ------------------------------------------ */
+  // Resolve the winning team name of a completed match. Prefers ESPN's explicit
+  // winnerSide flag (which honours penalties / extra time), and falls back to a
+  // straight score comparison for older docs that pre-date the field.
+  function winnerOfMatch(m) {
+    if (!m || m.status !== "final") return null;
+    if (m.winnerSide === "home") return m.homeTeam;
+    if (m.winnerSide === "away") return m.awayTeam;
+    const h = m.finalHome, a = m.finalAway;
+    if (h == null || a == null || h === a) return null;
+    return h > a ? m.homeTeam : m.awayTeam;
+  }
+
   // Stage tagging from the matches collection:
   //   semifinals  -> made the semis
   //   final       -> made the final (one of two teams)
-  //   final final -> winner (the one with higher finalHome/finalAway)
+  //   final final -> winner (winnerOfMatch resolves penalties)
   function teamFurthestStage(teamName) {
     if (!STATE.matches.length) return { rank: 0, label: "Not started", cssClass: "" };
     // Sort priority: champion > final > semi > alive > out
@@ -1202,15 +1214,13 @@
     );
     if (!matches.length) return { rank: 0, label: "Unknown", cssClass: "" };
 
-    // Winner detection
+    // Winner detection. winnerSide is ESPN's authoritative winner flag, which
+    // handles ties resolved by penalties / extra time. Falls back to score when
+    // older data hasn't been resynced.
     const finalMatch = STATE.matches.find((m) => m.stage === "final" && m.status === "final");
     if (finalMatch) {
-      const home = finalMatch.homeTeam, away = finalMatch.awayTeam;
-      const hScore = finalMatch.finalHome, aScore = finalMatch.finalAway;
-      if (hScore != null && aScore != null && hScore !== aScore) {
-        const winner = hScore > aScore ? home : away;
-        if (winner === teamName) return { rank: 5, label: "Champion", cssClass: "champion" };
-      }
+      const w = winnerOfMatch(finalMatch);
+      if (w && w === teamName) return { rank: 5, label: "Champion", cssClass: "champion" };
     }
 
     // Played in final (either side)
@@ -1221,16 +1231,16 @@
     const playedSemi = matches.some((m) => m.stage === "semifinals");
     if (playedSemi) return { rank: 3, label: "Semi", cssClass: "semi" };
 
-    // Completed earlier knockout (final result win/loss in QF/R16/R32)
+    // Completed earlier knockout (final result win/loss in QF/R16/R32).
+    // Use winnerSide (ESPN's authoritative flag) so penalty-shootout results
+    // resolve correctly. Score comparison is the fallback for older data.
     const knockoutStages = ["quarterfinals", "round-of-16", "round-of-32"];
     for (const stg of knockoutStages) {
       const k = matches.find((m) => m.stage === stg && m.status === "final");
       if (k) {
-        const isHome = k.homeTeam === teamName;
-        const me = isHome ? k.finalHome : k.finalAway;
-        const them = isHome ? k.finalAway : k.finalHome;
-        if (me != null && them != null) {
-          if (me > them) {
+        const winner = winnerOfMatch(k);
+        if (winner) {
+          if (winner === teamName) {
             const label = stg === "quarterfinals" ? "Through to SF"
               : stg === "round-of-16" ? "Through to QF"
               : "Through to R16";
