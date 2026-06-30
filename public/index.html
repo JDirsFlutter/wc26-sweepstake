@@ -577,6 +577,16 @@
     color: var(--font-interactive-stronger);
     font-weight: var(--fw-medium);
   }
+  .lb .alive-count {
+    font-variant-numeric: tabular-nums;
+    font-weight: var(--fw-bold);
+    font-size: var(--fs-14); line-height: var(--lh-20);
+  }
+  .lb .alive-count.all-alive { color: var(--c-teal-500); }
+  .lb .alive-count.partial   { color: var(--c-yellow-500); }
+  .lb .alive-count.all-out   { color: var(--font-interactive-weak); }
+  .lb tr.row-all-out td { opacity: 0.55; }
+  .lb tr.row-all-out td:nth-child(2) { text-decoration: line-through; }
   .lb .team-chip.elite { border-color: var(--c-teal-700); }
   .lb .team-chip.out {
     opacity: 0.55;
@@ -1430,17 +1440,28 @@
           teams.push({ team: u, tier: "underdog", stage: teamFurthestStage(u.name) });
         }
       }
-      return { name: e.name, slot: e.slot, kudos, teams };
+      const aliveCount = teams.filter((t) => t.stage.cssClass !== "out").length;
+      const totalCount = teams.length;
+      return { name: e.name, slot: e.slot, kudos, teams, aliveCount, totalCount };
     });
-    // Sort by kudos descending once the tournament starts producing them.
-    // Pre-tournament everyone is 0, so fall back to pick order (slot number).
+    // Sort priority: kudos desc, then alive desc, then slot asc. Pre-tournament
+    // everyone is tied so this collapses to pick order. Once knockouts start
+    // eliminating teams, people with more survivors rise even before any kudos
+    // land (which only kick in at the semi-finals).
     const anyKudos = rows.some((r) => r.kudos > 0);
-    rows.sort((a, b) => anyKudos ? (b.kudos - a.kudos || a.slot - b.slot) : (a.slot - b.slot));
+    const anyOut = rows.some((r) => r.aliveCount < r.totalCount);
+    rows.sort((a, b) =>
+      (b.kudos - a.kudos)
+      || (b.aliveCount - a.aliveCount)
+      || (a.slot - b.slot)
+    );
 
     root.appendChild(el("p", { class: "view-meta" }, [
       String(rows.length), " of ", String((SWEEP_PARTICIPANTS || []).length),
       " picked.",
-      anyKudos ? " Ranked by kudos." : " Listed in pick order. Kudos start landing once teams reach the semi-finals.",
+      anyKudos ? " Ranked by kudos, then teams remaining."
+        : anyOut ? " Ranked by teams remaining. Kudos start landing at the semi-finals."
+        : " Listed in pick order. Kudos start landing once teams reach the semi-finals.",
     ]));
 
     const table = el("table", { class: "lb" });
@@ -1450,6 +1471,7 @@
         el("th", null, ["Name"]),
         el("th", { class: "num" }, ["Slot"]),
         el("th", null, ["Teams"]),
+        el("th", { class: "num" }, ["Alive"]),
         el("th", { class: "num" }, ["Kudos"]),
       ]),
     ]);
@@ -1468,11 +1490,19 @@
           })
         ),
       ]);
-      tbody.appendChild(el("tr", { class: isYou ? "you" : "" }, [
+      const aliveState = r.totalCount === 0 ? "none"
+        : r.aliveCount === 0 ? "all-out"
+        : r.aliveCount === r.totalCount ? "all-alive"
+        : "partial";
+      const rowClass = (isYou ? "you" : "") + (aliveState === "all-out" ? " row-all-out" : "");
+      tbody.appendChild(el("tr", { class: rowClass.trim() }, [
         el("td", { class: rankClass }, [String(i + 1)]),
         el("td", null, [r.name]),
         el("td", { class: "num" }, [String(r.slot)]),
         cellTeams,
+        el("td", { class: "num" }, [
+          el("span", { class: "alive-count " + aliveState }, [r.aliveCount + "/" + r.totalCount]),
+        ]),
         el("td", { class: "num" }, [String(r.kudos)]),
       ]));
     });
