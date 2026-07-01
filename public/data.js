@@ -76,6 +76,15 @@ const SWEEP_ESPN = {
 };
 const SWEEP_LIVE_POLL_MS = 60 * 1000;
 
+/* ----- Auto-sync throttle ---------------------------------
+   The site pulls fresh results from ESPN in the background on
+   each visit. To avoid hammering ESPN and Firestore we only
+   actually sync when the last successful sync is older than
+   this many hours. Anyone opening the page after the window
+   passes triggers a refresh for the whole group.
+   ---------------------------------------------------------- */
+const SWEEP_AUTO_SYNC_STALE_HOURS = 6;
+
 /* ----- Admin passcode -------------------------------------
    Used to gate the #admin route. Replace before sharing.
    Not high security; stops casual tampering only.

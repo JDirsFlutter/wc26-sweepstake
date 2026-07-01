@@ -301,6 +301,12 @@
     color: var(--font-interactive-medium);
     margin: 0 0 var(--space-lg);
   }
+  .view-meta-subtle {
+    font-size: var(--fs-12); line-height: var(--lh-16);
+    color: var(--font-interactive-weak);
+    margin-top: calc(-1 * var(--space-md));
+    margin-bottom: var(--space-md);
+  }
   .banner {
     padding: var(--space-sm) var(--space-md);
     border: var(--border-sm) solid var(--border-interactive-weak);
@@ -856,6 +862,9 @@
       });
 
       attachAllSubs();
+      // Freshen match data in the background if it's older than the auto-sync
+      // window. Fire and forget: any failure is logged, not surfaced to the UI.
+      maybeAutoSyncMatches();
     } catch (err) {
       console.error("Firebase init failed:", err);
       STATE.fbMode = "local";
@@ -1035,44 +1044,129 @@
     if (e) e.textContent = msg;
   }
 
-  /* ---- ESPN sync (optional, mirror of predictions admin) ------- */
+  /* ---- ESPN sync --------------------------------------------- */
+  // Pulls the whole tournament window from ESPN and writes back to
+  // matches/{id}. Idempotent, safe to run from any authenticated client.
+  // Called both by the admin "Refresh" button and the auto-sync on visit.
+  async function syncMatchesFromEspn() {
+    const overrides = (typeof SWEEP_TEAM_OVERRIDES !== "undefined" && SWEEP_TEAM_OVERRIDES) || {};
+    const flags = (typeof SWEEP_TEAM_FLAGS !== "undefined" && SWEEP_TEAM_FLAGS) || {};
+    const isKnownAbbr = (a) => !!(a && flags[a]);
+    const startISO = (SWEEP_WINDOW.startISO || "").replace(/-/g, "");
+    const endISO   = (SWEEP_WINDOW.endISO   || "").replace(/-/g, "");
+    const url = SWEEP_ESPN.base + "?dates=" + startISO + "-" + endISO + "&limit=200";
+    const resp = await fetch(url);
+    const data = await resp.json();
+    const events = data.events || [];
+    const { fs, Db } = FB;
+    let written = 0, skipped = 0;
+    for (const e of events) {
+      try {
+        const comp = e.competitions[0];
+        const home = comp.competitors.find((c) => c.homeAway === "home");
+        const away = comp.competitors.find((c) => c.homeAway === "away");
+        if (!home || !away) { skipped++; continue; }
+        const homeAbbr = home.team.abbreviation || "";
+        const awayAbbr = away.team.abbreviation || "";
+        // Skip bracket placeholders (e.g. "Winner of Match 73") until both sides resolve.
+        if (!isKnownAbbr(homeAbbr) || !isKnownAbbr(awayAbbr)) { skipped++; continue; }
+        const homeName = overrides[home.team.displayName] || home.team.displayName || "Home";
+        const awayName = overrides[away.team.displayName] || away.team.displayName || "Away";
+        // Prefer season.slug over comp.notes[0].headline: once a knockout is decided,
+        // ESPN overwrites the headline with result narration ("X advance Y-Z on penalties")
+        // which breaks stage equality checks.
+        const stage = (e.season && e.season.slug)
+          || (comp.notes && comp.notes[0] && comp.notes[0].headline)
+          || "";
+        const isFinal = !!(e.status && e.status.type && e.status.type.completed === true);
+        const isLive = !isFinal && !!(e.status && e.status.type && (e.status.type.name || "").includes("IN_PROGRESS"));
+        const status = isFinal ? "final" : isLive ? "live" : "scheduled";
+        const finalHome = home.score !== "" && home.score != null ? Number(home.score) : null;
+        const finalAway = away.score !== "" && away.score != null ? Number(away.score) : null;
+        // ESPN sets `winner: true` on the winning competitor even when the tie
+        // is broken by penalties or extra time, so this beats a raw score comparison.
+        const winnerSide = isFinal
+          ? (home.winner === true ? "home" : away.winner === true ? "away" : null)
+          : null;
+        const shootoutHome = home.shootoutScore != null ? Number(home.shootoutScore) : null;
+        const shootoutAway = away.shootoutScore != null ? Number(away.shootoutScore) : null;
+        await fs.setDoc(fs.doc(Db, "matches", String(e.id)), {
+          id: String(e.id),
+          homeTeam: homeName, awayTeam: awayName,
+          homeAbbr, awayAbbr,
+          stage, status,
+          finalHome, finalAway,
+          winnerSide, shootoutHome, shootoutAway,
+          lastSyncedAt: new Date().toISOString(),
+        }, { merge: true });
+        written++;
+      } catch (err) {
+        console.warn("[sync] skipping event", e && e.id, err);
+        skipped++;
+      }
+    }
+    return { written, skipped };
+  }
+
+  // Admin button: full sync + status readout.
   async function syncResults() {
     if (STATE.fbMode !== "firebase") {
       setAdminResultsStatus("Firebase not configured.");
       return;
     }
-    setAdminResultsStatus("Refreshing matches...");
-    const today = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+    setAdminResultsStatus("Refreshing all fixtures from ESPN...");
     try {
-      const url = SWEEP_ESPN.base + "?dates=" + today;
-      const resp = await fetch(url);
-      const data = await resp.json();
-      const events = data.events || [];
+      const { written, skipped } = await syncMatchesFromEspn();
       const { fs, Db } = FB;
-      let written = 0;
-      for (const e of events) {
-        try {
-          const comp = e.competitions[0];
-          const home = comp.competitors.find((c) => c.homeAway === "home");
-          const away = comp.competitors.find((c) => c.homeAway === "away");
-          if (!home || !away) continue;
-          const completed = e.status && e.status.type && e.status.type.completed === true;
-          const status = completed ? "final"
-            : (e.status && e.status.type && e.status.type.name.includes("IN_PROGRESS")) ? "live"
-            : "scheduled";
-          await fs.setDoc(fs.doc(Db, "matches", String(e.id)), {
-            id: String(e.id),
-            status,
-            finalHome: home.score !== "" && home.score != null ? Number(home.score) : null,
-            finalAway: away.score !== "" && away.score != null ? Number(away.score) : null,
-          }, { merge: true });
-          written++;
-        } catch (err) { console.warn("Skip event", e?.id, err); }
-      }
-      setAdminResultsStatus("Refreshed " + written + " match" + (written === 1 ? "" : "es") + ".");
+      await fs.setDoc(fs.doc(Db, "sweep_meta", "state"), {
+        lastAutoSyncAt: new Date().toISOString(),
+      }, { merge: true });
+      setAdminResultsStatus("Refreshed " + written + " fixtures (" + skipped + " placeholders skipped).");
     } catch (err) {
       setAdminResultsStatus("Refresh failed: " + err.message);
     }
+  }
+
+  // Fire-and-forget auto-sync on page load. Transaction-gated so only one
+  // visitor per stale window actually hits ESPN.
+  async function maybeAutoSyncMatches() {
+    if (STATE.fbMode !== "firebase") return;
+    if (!FB || !FB.fs || !FB.Db) return;
+    const { fs, Db } = FB;
+    const staleHours = (typeof SWEEP_AUTO_SYNC_STALE_HOURS === "number" && SWEEP_AUTO_SYNC_STALE_HOURS > 0)
+      ? SWEEP_AUTO_SYNC_STALE_HOURS : 6;
+    try {
+      const claimed = await fs.runTransaction(Db, async (tx) => {
+        const ref = fs.doc(Db, "sweep_meta", "state");
+        const snap = await tx.get(ref);
+        const cur = snap.exists() ? snap.data() : {};
+        const lastMs = cur.lastAutoSyncAt ? Date.parse(cur.lastAutoSyncAt) : 0;
+        const ageHours = (Date.now() - lastMs) / 3600000;
+        if (Number.isFinite(ageHours) && ageHours < staleHours) return false;
+        tx.set(ref, { lastAutoSyncAt: new Date().toISOString() }, { merge: true });
+        return true;
+      });
+      if (!claimed) return;
+      const { written } = await syncMatchesFromEspn();
+      console.log("[auto-sync] refreshed", written, "fixtures");
+    } catch (err) {
+      console.warn("[auto-sync] failed:", err && err.message);
+    }
+  }
+
+  // "3 hours ago" style formatting for the Picks page freshness indicator.
+  function relativeTimeSince(iso) {
+    if (!iso) return "";
+    const ms = Date.now() - Date.parse(iso);
+    if (!Number.isFinite(ms) || ms < 0) return "just now";
+    const s = Math.floor(ms / 1000);
+    if (s < 60) return "just now";
+    const m = Math.floor(s / 60);
+    if (m < 60) return m + " min ago";
+    const h = Math.floor(m / 60);
+    if (h < 24) return h + " hour" + (h === 1 ? "" : "s") + " ago";
+    const d = Math.floor(h / 24);
+    return d + " day" + (d === 1 ? "" : "s") + " ago";
   }
 
   function setAdminResultsStatus(msg) {
@@ -1473,6 +1567,17 @@
         : anyOut ? " Ranked by teams remaining. Kudos start landing at the semi-finals."
         : " Listed in pick order. Kudos start landing once teams reach the semi-finals.",
     ]));
+
+    // Freshness line: shows when match data last synced from ESPN. Auto-sync
+    // runs in the background whenever a visitor lands and the data is stale
+    // (every " + SWEEP_AUTO_SYNC_STALE_HOURS + "h by default), so this should
+    // never drift more than a day or so.
+    const lastSyncIso = STATE.meta && STATE.meta.lastAutoSyncAt;
+    if (lastSyncIso) {
+      root.appendChild(el("p", { class: "view-meta view-meta-subtle" }, [
+        "Results updated " + relativeTimeSince(lastSyncIso) + ". Auto-refreshes each morning.",
+      ]));
+    }
 
     const table = el("table", { class: "lb" });
     const thead = el("thead", null, [
